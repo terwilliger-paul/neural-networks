@@ -10,8 +10,8 @@ ENTROPY_COEF = .1
 VALUE_COEF = 1.
 ADAM = 1e-4
 GAMMA = 0.95
-EPOCHS = 1
-BATCH_SIZE = 64
+EPOCHS = 10
+BATCH_SIZE = 2048
 ER_SIZE = 100000
 
 class PPO:
@@ -198,7 +198,10 @@ env = gym.make('CartPole-v1')
 big_states = []
 big_actions = []
 big_rewards = []
+big_done = []
+trials = 0
 while True:
+    trials += 1
     state = env.reset()
 
     done = False
@@ -206,6 +209,7 @@ while True:
     rewards = []
     actions = []
     values = []
+    dones = []
     t = 0
     while not done:
         t += 1
@@ -228,6 +232,7 @@ while True:
         if done:
             reward = 0
         rewards.append(reward)
+        dones.append(not done)
         state = new_state
 
     def slope(xs):
@@ -237,8 +242,8 @@ while True:
              ((np.mean(xs)**2) - np.mean(xs**2)))
         return m
 
-    print(f"timesteps={t}, r={np.sum(rewards)}, mean={np.mean(values)}", end="")
-    print(f", std={np.std(values)}, slope={slope(values)}")
+    print(f"{trials}. timesteps={t}, r={np.sum(rewards)}, mean={np.mean(values)}", end="")
+    print(f", std={np.std(values)}, slope={slope(values)}", end="")
 
     '''
     states = np.array(states, dtype=np.float32)
@@ -271,6 +276,7 @@ while True:
     big_states += states
     big_actions += actions
     big_rewards += rewards
+    big_done += dones
 
     def minibatch(mat, batches):
         return np.array_split(mat, int(mat.shape[0]/batches))
@@ -278,20 +284,24 @@ while True:
     big_states = np.array(big_states, dtype=np.float32)
     big_actions = np.array(big_actions, dtype=np.int32)
     big_rewards = np.array(big_rewards, dtype=np.float32)
+    big_done = np.array(big_done, dtype=np.int32)
 
     if len(big_states) > BATCH_SIZE:
         for _ in range(EPOCHS):
             # Generate target values
             predicted = ppo.predict_value(big_states).T[0]
-            p_values = np.roll(predicted, -1)*big_rewards
+            p_values = np.roll(predicted, -1)*big_done
             big_target_values = np.array(
                         (GAMMA*p_values) + big_rewards).astype(np.float32)
             advantages = big_target_values - p_values
+            # GAES IS NOT CALCULATED CORRECTLY HERE
+            ###############
             gaes = [r_t + GAMMA * v_next - v for r_t, v_next, v
                     in zip(big_rewards, p_values, predicted)]
             # is T-1, where T is time step which run policy
             for t in reversed(range(len(gaes) - 1)):
-                gaes[t] = gaes[t] + GAMMA * gaes[t + 1]
+                if big_done[t] == 1:
+                    gaes[t] = gaes[t] + GAMMA * gaes[t + 1]
             gaes = np.array(gaes).astype(dtype=np.float32)
             gaes = (gaes - gaes.mean()) / gaes.std()
 
@@ -303,11 +313,12 @@ while True:
                         minibatch(big_actions[shuffler], BATCH_SIZE)[i],
                         minibatch(big_target_values[shuffler], BATCH_SIZE)[i],
                          minibatch(gaes[shuffler], BATCH_SIZE)[i])
-        print(f"------------------------------loss: {loss}")
+        print(f", loss: {loss}")
 
     big_states = big_states.tolist()[-ER_SIZE:]
     big_actions = big_actions.tolist()[-ER_SIZE:]
     big_rewards = big_rewards.tolist()[-ER_SIZE:]
+    big_done = big_done.tolist()[-ER_SIZE:]
     '''
         big_states = []
         big_actions = []
